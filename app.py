@@ -1,168 +1,184 @@
-"""
-REST API for network scanning using python3-nmap (nmap3).
-Includes:
-- Live Host Discovery (ARP, Ping, etc.)
-- TCP/UDP port scanning techniques (connect, SYN, FIN, UDP, etc.)
-
-This API is intended for DevSecOps projects focusing on security, 
-automation and containerized deployments.
-"""
-
+import logging
+import ipaddress
+import re
 from flask import Flask, request, jsonify
+from functools import wraps
 import nmap3
+
+# Configuration du logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Instantiate host discovery and scan technique engines
-host_discovery = nmap3.NmapHostDiscovery()
-scan_engine = nmap3.NmapScanTechniques()
-
+# Instanciation des moteurs Nmap
+try:
+    host_discovery = nmap3.NmapHostDiscovery()
+    scan_engine = nmap3.NmapScanTechniques()
+except Exception as e:
+    logger.critical(f"Erreur lors de l'initialisation de nmap3: {e}")
+    exit(1)
 
 # ------------------------------
-# Utility Functions
+# Décorateurs & Utilitaires
 # ------------------------------
 
-def validate_json(required_fields, data):
+def require_api_key(f):
+    """(Optionnel) Sécurisation basique par API Key."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # En prod, utilisez une variable d'environnement ou un gestionnaire de secrets
+        api_key = request.headers.get('X-API-KEY')
+        if api_key != "votre-super-secret-key": 
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def is_valid_target(target):
+    """Valide si la cible est une IP, un sous-réseau CIDR ou un domaine valide."""
+    try:
+        # Vérifie IP v4/v6 ou CIDR
+        ipaddress.ip_network(target, strict=False)
+        return True
+    except ValueError:
+        # Vérification simple de nom de domaine (regex basique)
+        regex_domain = r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
+        return re.match(regex_domain, target) is not None
+
+def sanitize_nmap_args(args_str):
     """
-    Validate that required fields exist in the JSON payload.
-
-    Args:
-        required_fields (list): List of required keys.
-        data (dict): Parsed JSON payload.
-
-    Returns:
-        tuple: (bool, message) where bool indicates success, message contains error.
+    Nettoie les arguments pour éviter l'injection de commandes.
+    N'autorise que certains caractères sûrs.
     """
-    for field in required_fields:
-        if field not in data:
-            return False, f"Missing required field: '{field}'"
-    return True, None
-
+    if not args_str:
+        return ""
+    # Autorise seulement alphanumérique, tirets, espaces et slash
+    if not re.match(r"^[a-zA-Z0-9\-\s\/]+$", args_str):
+        raise ValueError("Arguments contiennent des caractères interdits")
+    return args_str
 
 # ------------------------------
-# Live Host Discovery Endpoint
+# Endpoints
 # ------------------------------
 
 @app.route("/discover", methods=["POST"])
+# @require_api_key # Décommentez pour activer la sécurité
 def discover_hosts():
-    """
-    Perform host discovery using ARP scan, ICMP ping, etc.
-    Methods supported depend on python3-nmap capabilities.
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
 
-    Expected JSON:
-    {
-        "targets": "192.168.1.0/24",
-        "method": "arp" | "ping",
-        "args": "-n" (optional extra nmap arguments)
-    }
-    """
-    data = request.get_json(force=True)
-    ok, msg = validate_json(["targets", "method"], data)
-    if not ok:
-        return jsonify({"error": msg}), 400
+    target = data.get("targets")
+    method = data.get("method")
+    extra_args = data.get("args", "")
 
-    targets = data["targets"]
-    method = data["method"]
-    args = data.get("args", "")
+    # Validation stricte
+    if not target or not method:
+        return jsonify({"error": "Missing 'targets' or 'method'"}), 400
+    
+    if not is_valid_target(target):
+        return jsonify({"error": f"Invalid target format: {target}"}), 400
 
-    # Map method to internal nmap3 function
+    try:
+        safe_args = sanitize_nmap_args(extra_args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    logger.info(f"Discovery scan requested: {method} on {target}")
+
     discovery_map = {
         "arp": host_discovery.nmap_arp_discovery,
-        "ping": host_discovery.nmap_no_portscan   # ICMP ping discovery
+        "ping": host_discovery.nmap_no_portscan
     }
 
     if method not in discovery_map:
-        return jsonify({"error": f"Unsupported discovery method '{method}'"}), 400
+        return jsonify({"error": f"Unsupported method '{method}'"}), 400
 
     try:
-        result = discovery_map[method](targets, args=args)
+        # Exécution du scan
+        result = discovery_map[method](target, args=safe_args)
+        return jsonify({
+            "status": "success",
+            "method": method,
+            "data": result
+        })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Scan failed: {e}")
+        return jsonify({"error": "Internal Scan Error", "details": str(e)}), 500
 
-    return jsonify({
-        "method": method,
-        "targets": targets,
-        "results": result
-    })
-
-
-# ------------------------------
-# Port Scanning Endpoint
-# ------------------------------
 
 @app.route("/scan", methods=["POST"])
 def port_scan():
-    """
-    Perform TCP/UDP port scanning using different techniques.
-    Supports connect scan, SYN scan, FIN scan, UDP scan, etc.
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
 
-    Expected JSON:
-    {
-        "target": "192.168.1.10",
-        "ports": "1-1000" OR "22,80,443",
-        "techniques": ["tcp", "syn", "fin", "udp"],
-        "args": "-n" (optional)
-    }
-    """
-    data = request.get_json(force=True)
-    ok, msg = validate_json(["target", "techniques"], data)
-    if not ok:
-        return jsonify({"error": msg}), 400
+    target = data.get("targets")
+    ports = data.get("ports") # Peut être None pour défaut
+    techniques = data.get("techniques", [])
 
-    target = data["target"]
-    ports = data.get("ports")
-    techniques = data["techniques"]
+    # Si l'utilisateur envoie "tcp" au lieu de ["tcp"], on convertit la chaine en liste
+    if isinstance(techniques, str):
+        techniques = [techniques]
+
     extra_args = data.get("args", "")
 
+    # Validations
+    if not target or not techniques:
+        return jsonify({"error": "Missing 'targets' or 'techniques'"}), 400
+    
+    if not is_valid_target(target):
+        return jsonify({"error": f"Invalid target IP/CIDR: {target}"}), 400
+    
+    # Validation basique des ports (ex: "80" ou "1-100" ou "80,443")
+    if ports and not re.match(r"^[0-9,\-]+$", ports):
+        return jsonify({"error": "Invalid ports format"}), 400
+
+    try:
+        safe_args = sanitize_nmap_args(extra_args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     results = {}
+    
+    # Construction des arguments globaux
+    base_args = safe_args
+    if ports:
+        base_args = f"-p {ports} {safe_args}".strip()
+
+    logger.info(f"Port scan requested on {target} techniques={techniques}")
 
     for tech in techniques:
         try:
-            # Construct argument string
-            arg_string = ""
-            if ports:
-                arg_string = f"-p {ports} {extra_args}".strip()
-            else:
-                arg_string = extra_args
-
-            # Technique mapping
             if tech == "tcp":
-                result = scan_engine.nmap_tcp_scan(target, args=arg_string)
+                res = scan_engine.nmap_tcp_scan(target, args=base_args)
             elif tech == "syn":
-                result = scan_engine.nmap_syn_scan(target, args=arg_string)
+                # Note: SYN scan requiert des privilèges root (sudo ou capabilities)
+                res = scan_engine.nmap_syn_scan(target, args=base_args)
             elif tech == "fin":
-                result = scan_engine.nmap_fin_scan(target, args=arg_string)
+                res = scan_engine.nmap_fin_scan(target, args=base_args)
             elif tech == "udp":
-                result = scan_engine.nmap_udp_scan(target, args=arg_string)
+                # UDP est lent et requiert root
+                res = scan_engine.nmap_udp_scan(target, args=base_args)
             else:
-                results[tech] = {"error": f"Unsupported scan technique '{tech}'"}
+                results[tech] = {"error": "Unsupported technique"}
                 continue
-
-            results[tech] = result
+            
+            results[tech] = res
 
         except Exception as e:
+            logger.error(f"Error executing {tech} scan: {e}")
             results[tech] = {"error": str(e)}
 
     return jsonify({
         "target": target,
-        "ports": ports,
-        "results": results
+        "scan_results": results
     })
 
-
-# ------------------------------
-# Root (Health Check)
-# ------------------------------
-
-@app.route("/", methods=["GET"])
-def root():
-    """Simple health check endpoint."""
-    return jsonify({"status": "ok", "message": "Nmap API running"})
-
-
-# ------------------------------
-# Main
-# ------------------------------
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "version": "1.1.0"})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    # Désactiver le debug en prod !
+    app.run(host="0.0.0.0", port=5000, debug=False)
