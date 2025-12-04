@@ -3,7 +3,8 @@ import ipaddress
 import re
 from flask import Flask, request, jsonify
 from functools import wraps
-import nmap3
+
+from tasks import async_host_discovery, async_port_scan, celery
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -11,48 +12,20 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Instanciation des moteurs Nmap
-try:
-    host_discovery = nmap3.NmapHostDiscovery()
-    scan_engine = nmap3.NmapScanTechniques()
-except Exception as e:
-    logger.critical(f"Erreur lors de l'initialisation de nmap3: {e}")
-    exit(1)
-
-# ------------------------------
-# Décorateurs & Utilitaires
-# ------------------------------
-
-def require_api_key(f):
-    """(Optionnel) Sécurisation basique par API Key."""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        # En prod, utilisez une variable d'environnement ou un gestionnaire de secrets
-        api_key = request.headers.get('X-API-KEY')
-        if api_key != "votre-super-secret-key": 
-            return jsonify({"error": "Unauthorized"}), 401
-        return f(*args, **kwargs)
-    return decorated_function
+# --------------------------
+# Utilitaires de Validation
+# --------------------------
 
 def is_valid_target(target):
-    """Valide si la cible est une IP, un sous-réseau CIDR ou un domaine valide."""
     try:
-        # Vérifie IP v4/v6 ou CIDR
         ipaddress.ip_network(target, strict=False)
         return True
     except ValueError:
-        # Vérification simple de nom de domaine (regex basique)
         regex_domain = r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
         return re.match(regex_domain, target) is not None
 
 def sanitize_nmap_args(args_str):
-    """
-    Nettoie les arguments pour éviter l'injection de commandes.
-    N'autorise que certains caractères sûrs.
-    """
-    if not args_str:
-        return ""
-    # Autorise seulement alphanumérique, tirets, espaces et slash
+    if not args_str: return ""
     if not re.match(r"^[a-zA-Z0-9\-\s\/]+$", args_str):
         raise ValueError("Arguments contiennent des caractères interdits")
     return args_str
@@ -62,17 +35,15 @@ def sanitize_nmap_args(args_str):
 # ------------------------------
 
 @app.route("/discover", methods=["POST"])
-# @require_api_key # Décommentez pour activer la sécurité
 def discover_hosts():
     data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    if not data: return jsonify({"error": "Invalid JSON"}), 400
 
     target = data.get("targets")
     method = data.get("method")
     extra_args = data.get("args", "")
 
-    # Validation stricte
+    # 1. Validation (Synchron)
     if not target or not method:
         return jsonify({"error": "Missing 'targets' or 'method'"}), 400
     
@@ -84,53 +55,44 @@ def discover_hosts():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    logger.info(f"Discovery scan requested: {method} on {target}")
+    if method not in ["arp", "ping"]:
+         return jsonify({"error": f"Unsupported method '{method}'"}), 400
 
-    discovery_map = {
-        "arp": host_discovery.nmap_arp_discovery,
-        "ping": host_discovery.nmap_no_portscan
-    }
+    # 2. Délégation (Asynchrone)
+    # On envoie la tâche à Redis via Celery
+    task = async_host_discovery.delay(target, method, safe_args)
 
-    if method not in discovery_map:
-        return jsonify({"error": f"Unsupported method '{method}'"}), 400
+    logger.info(f"Discovery task queued: {task.id} for {target}")
 
-    try:
-        # Exécution du scan
-        result = discovery_map[method](target, args=safe_args)
-        return jsonify({
-            "status": "success",
-            "method": method,
-            "data": result
-        })
-    except Exception as e:
-        logger.error(f"Scan failed: {e}")
-        return jsonify({"error": "Internal Scan Error", "details": str(e)}), 500
+    return jsonify({
+        "status": "queued",
+        "job_id": task.id,
+        "message": f"Discovery started. Check /status/{task.id}"
+    }), 202
 
 
 @app.route("/scan", methods=["POST"])
 def port_scan():
     data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    if not data: return jsonify({"error": "Invalid JSON"}), 400
 
     target = data.get("targets")
-    ports = data.get("ports") # Peut être None pour défaut
+    ports = data.get("ports")
     techniques = data.get("techniques", [])
 
-    # Si l'utilisateur envoie "tcp" au lieu de ["tcp"], on convertit la chaine en liste
+    # Correction liste
     if isinstance(techniques, str):
         techniques = [techniques]
 
     extra_args = data.get("args", "")
 
-    # Validations
+    # 1. Validation
     if not target or not techniques:
         return jsonify({"error": "Missing 'targets' or 'techniques'"}), 400
     
     if not is_valid_target(target):
         return jsonify({"error": f"Invalid target IP/CIDR: {target}"}), 400
     
-    # Validation basique des ports (ex: "80" ou "1-100" ou "80,443")
     if ports and not re.match(r"^[0-9,\-]+$", ports):
         return jsonify({"error": "Invalid ports format"}), 400
 
@@ -139,46 +101,43 @@ def port_scan():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    results = {}
+    # 2. Délégation
+    task = async_port_scan.delay(target, ports, techniques, safe_args)
     
-    # Construction des arguments globaux
-    base_args = safe_args
-    if ports:
-        base_args = f"-p {ports} {safe_args}".strip()
-
-    logger.info(f"Port scan requested on {target} techniques={techniques}")
-
-    for tech in techniques:
-        try:
-            if tech == "tcp":
-                res = scan_engine.nmap_tcp_scan(target, args=base_args)
-            elif tech == "syn":
-                # Note: SYN scan requiert des privilèges root (sudo ou capabilities)
-                res = scan_engine.nmap_syn_scan(target, args=base_args)
-            elif tech == "fin":
-                res = scan_engine.nmap_fin_scan(target, args=base_args)
-            elif tech == "udp":
-                # UDP est lent et requiert root
-                res = scan_engine.nmap_udp_scan(target, args=base_args)
-            else:
-                results[tech] = {"error": "Unsupported technique"}
-                continue
-            
-            results[tech] = res
-
-        except Exception as e:
-            logger.error(f"Error executing {tech} scan: {e}")
-            results[tech] = {"error": str(e)}
+    logger.info(f"Scan task queued: {task.id} for {target}")
 
     return jsonify({
-        "target": target,
-        "scan_results": results
-    })
+        "status": "queued",
+        "job_id": task.id,
+        "message": f"Scan started. Check /status/{task.id}"
+    }), 202
+
+
+@app.route("/status/<job_id>", methods=["GET"])
+def get_status(job_id):
+    """Récupérer le résultat d'une tâche via son ID"""
+    try:
+        result = celery.AsyncResult(job_id)
+        
+        response = {
+            "job_id": job_id,
+            "state": result.state
+        }
+
+        if result.state == 'PENDING':
+            response["status"] = "Processing..."
+        elif result.state == 'SUCCESS':
+            response["result"] = result.result
+        elif result.state == 'FAILURE':
+            response["error"] = str(result.info)
+        
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "ok", "version": "1.1.0"})
+    return jsonify({"status": "ok", "mode": "async"})
 
 if __name__ == "__main__":
-    # Désactiver le debug en prod !
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000)

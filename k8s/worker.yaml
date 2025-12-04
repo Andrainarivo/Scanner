@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nmap-worker
+spec:
+  replicas: 2 # On démarre avec 2 workers pour paralléliser
+  selector:
+    matchLabels:
+      app: nmap-worker
+  template:
+    metadata:
+      labels:
+        app: nmap-worker
+    spec:
+      containers:
+      - name: worker
+        # L'image sur VM Registry
+        image: 192.168.1.98:5000/nmap-app:v1
+        imagePullPolicy: Always # Important pour le lab (force le re-téléchargement)
+        command: ["celery", "-A", "tasks", "worker", "--loglevel=info"]
+        env:
+        - name: CELERY_BROKER_URL
+          # Nom d'hôte 'redis-service' qui correspond au Service défini plus haut
+          value: "redis://redis-service:6379/0"
+        resources:
+          # Important pour l'autoscaling (HA) futur
+          requests:
+            memory: "128Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 1000 # L'ID de l'utilisateur 'scanner'

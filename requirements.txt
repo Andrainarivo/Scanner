@@ -1,0 +1,5 @@
+Flask
+python3-nmap
+gunicorn
+celery
+redis
