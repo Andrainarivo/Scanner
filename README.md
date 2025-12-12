@@ -1,1 +1,1 @@
-# REST API flask-based
+# REST API flask-based for host discovery and port scanning
