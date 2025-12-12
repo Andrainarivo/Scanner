@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         // ID des credentials configurés dans Jenkins
-        DOCKER_CRED_ID = 'docker-hub-credentials'
+        DOCKER_CRED_ID = 'docker-hub-creds'
         DOCKER_REGISTRY = 'docker.io'
         // Nom de base de l'image (sans suffixe inutile pour simplifier)
         DOCKER_IMAGE_NAME = "doda0101/nmap-app"
