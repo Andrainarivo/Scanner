@@ -2,10 +2,10 @@ pipeline {
     agent any
     
     environment {
-        // ID des credentials configurés dans Jenkins
+        // Jenkins credentials ID
         DOCKER_CRED_ID = 'docker-hub-creds'
         DOCKER_REGISTRY = 'docker.io'
-        // Nom de base de l'image (sans suffixe inutile pour simplifier)
+        // Base image name (no unnecessary suffix)
         DOCKER_IMAGE_NAME = "doda0101/nmap-app"
     }
     
@@ -19,12 +19,12 @@ pipeline {
         stage('Build & Push to Docker Hub') {
             steps {
                 script {
-                    // Création du tag unique basé sur le commit Git
+                    // Create unique tag based on the Git commit
                     def gitCommit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-                    // On nomme l'image : doda0101/nmap-app:a1b2c3d
+                    // Name the image: doda0101/nmap-app:a1b2c3d
                     def fullImageName = "${env.DOCKER_IMAGE_NAME}:${gitCommit}"
 
-                    echo "Construction de l'image : ${fullImageName}"
+                    echo "Building image: ${fullImageName}"
 
                     // 1. Authentification Docker Hub
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CRED_ID, 
@@ -48,10 +48,10 @@ pipeline {
         stage('Deploy to K8s') {
             steps {
                 script {
-                    echo "Mise à jour de Minikube avec : ${env.DEPLOY_IMAGE}"
-                    
-                    // La regex cherche 'image: doda0101/nmap-app:...' et remplace tout le tag
-                    // Cela mettra à jour api.yml ET worker.yml avec la même nouvelle image
+                    echo "Updating Minikube with: ${env.DEPLOY_IMAGE}"
+
+                    // The regex looks for 'image: doda0101/nmap-app:...' and replaces the tag
+                    // This will update api.yml AND worker.yml with the same new image
                     sh "sed -i 's|image: ${env.DOCKER_IMAGE_NAME}:.*|image: ${env.DEPLOY_IMAGE}|g' k8s/api.yml"
                     sh "sed -i 's|image: ${env.DOCKER_IMAGE_NAME}:.*|image: ${env.DEPLOY_IMAGE}|g' k8s/worker.yml"
 
@@ -59,8 +59,8 @@ pipeline {
                     sh "kubectl apply -f k8s/api.yml"
                     sh "kubectl apply -f k8s/worker.yml"
 
-                    // Attente de la mise à jour effective (Rollout)
-                    // Timeout de 60s pour éviter de bloquer le pipeline indéfiniment si ça plante
+                    // Wait for the rollout to complete
+                    // 60s timeout to avoid hanging the pipeline indefinitely if something fails
                     timeout(time: 60, unit: 'SECONDS') {
                         sh "kubectl rollout status deployment/nmap-api"
                         sh "kubectl rollout status deployment/nmap-worker"
@@ -70,12 +70,12 @@ pipeline {
         }
     }
 
-    // Étape de nettoyage (se lance toujours, succès ou échec)
+    // Cleanup step (runs always, on success or failure)
     post {
         always {
             script {
-                // Supprime l'image locale pour libérer de la place sur le serveur Jenkins
-                // On vérifie d'abord si la variable existe pour éviter une erreur
+                // Remove the local image to free space on the Jenkins server
+                // Check the variable exists first to avoid an error
                 if (env.DEPLOY_IMAGE) {
                     sh "docker rmi ${env.DEPLOY_IMAGE} || true"
                     sh "docker logout || true"
