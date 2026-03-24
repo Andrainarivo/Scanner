@@ -16,7 +16,7 @@ kind: Deployment
 metadata:
   name: nmap-api
 spec:
-  replicas: 2 # HA : 2 instances de l'API pour ne jamais perdre le service
+  replicas: 1 # HA : 2 instances de l'API pour ne jamais perdre le service
   selector:
     matchLabels:
       app: nmap-api

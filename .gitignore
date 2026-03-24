@@ -1,2 +1,5 @@
 .env/
 __pycache__/
+*.json
+.vscode/
+basic_wrapper.py

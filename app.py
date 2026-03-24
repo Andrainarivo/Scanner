@@ -56,7 +56,7 @@ def discover_hosts():
         return jsonify({"error": str(e)}), 400
 
     if method not in ["arp", "ping"]:
-         return jsonify({"error": f"Unsupported method '{method}'"}), 400
+        return jsonify({"error": f"Unsupported method '{method}'"}), 400
 
     # 2. Délégation (Asynchrone)
     # On envoie la tâche à Redis via Celery

@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: nmap-worker
 spec:
-  replicas: 2 # On démarre avec 2 workers pour paralléliser
+  replicas: 1 # On démarre avec 2 workers pour paralléliser
   selector:
     matchLabels:
       app: nmap-worker
