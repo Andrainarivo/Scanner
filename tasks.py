@@ -53,7 +53,7 @@ def async_port_scan(self, target, ports, techniques, safe_args):
             current_args = safe_args
 
             # Logique Privilégiée (déplacée ici)
-            if tech in ["syn", "udp"]:
+            if tech in ["syn", "udp", "fin"]:
                 current_args = f"{current_args} --privileged"
 
             # Ajout des ports

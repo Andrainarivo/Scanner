@@ -26,8 +26,9 @@ def is_valid_target(target):
 
 def sanitize_nmap_args(args_str):
     if not args_str: return ""
-    if not re.match(r"^[a-zA-Z0-9\-\s\/]+$", args_str):
-        raise ValueError("Arguments contiennent des caractères interdits")
+    # Ajout de . , = : pour supporter les arguments Nmap classiques
+    if not re.match(r"^[a-zA-Z0-9\-\s\/\.\,\=\:]+$", args_str):
+        raise ValueError("Les arguments contiennent des caractères interdits")
     return args_str
 
 # ------------------------------
@@ -124,12 +125,14 @@ def get_status(job_id):
             "state": result.state
         }
 
-        if result.state == 'PENDING':
+        if result.state in ['PENDING', 'STARTED', 'RETRY']:
             response["status"] = "Processing..."
         elif result.state == 'SUCCESS':
             response["result"] = result.result
         elif result.state == 'FAILURE':
             response["error"] = str(result.info)
+        else:
+            response["status"] = "Unknown state"
         
         return jsonify(response)
     except Exception as e:

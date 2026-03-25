@@ -29,9 +29,12 @@ COPY . .
 
 # Étape 8 : GESTION DES CAPABILITIES (Le point critique)
 # Au lieu de lancer en root, on donne à nmap les droits spécifiques :
-# - cap_net_raw : Pour envoyer des paquets bruts (SYN scan, OS detection)
+# - cap_net_raw : Pour envoyer des paquets bruts (TCP scan, OS detection)
 # - cap_net_admin : Pour configurer les interfaces réseaux si besoin
 # - cap_net_bind_service : Pour utiliser les ports privilégiés (<1024)
+
+USER root
+
 RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip /usr/bin/nmap
 
 # Changement de propriétaire des fichiers vers l'utilisateur non-root

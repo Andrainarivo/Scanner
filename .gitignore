@@ -3,3 +3,5 @@ __pycache__/
 *.json
 .vscode/
 basic_wrapper.py
+k8s/
+Jenkinsfile
