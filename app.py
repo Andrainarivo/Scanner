@@ -28,7 +28,7 @@ def sanitize_nmap_args(args_str):
     if not args_str: return ""
     # Ajout de . , = : pour supporter les arguments Nmap classiques
     if not re.match(r"^[a-zA-Z0-9\-\s\/\.\,\=\:]+$", args_str):
-        raise ValueError("Les arguments contiennent des caractères interdits")
+        raise ValueError("The arguments contain forbidden characters. Allowed: letters, numbers, - / . , = :")
     return args_str
 
 # ------------------------------
