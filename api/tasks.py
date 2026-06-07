@@ -72,7 +72,7 @@ def build_nmap_args(params):
 # ----------------------------------------------------------
 
 def format_scan_results(raw_results, target_requested, scan_type):
-    """Transforme le résultat brut de Nmap en un JSON propre et standardisé"""
+    """Transforme le résultat brut de Nmap en un JSON propre et sans bruit"""
     
     # Validation de base du format de résultat
     if not isinstance(raw_results, dict):
@@ -88,15 +88,6 @@ def format_scan_results(raw_results, target_requested, scan_type):
         host_data = raw_results[ip]
         if not isinstance(host_data, dict):
             continue
-
-        # État de l'hôte (up/down/unknown)
-        status = host_data.get("state", {}).get("state", "unknown")
-
-        # Détection d'OS (si disponible)
-        os_match = "unknown"
-        os_matches = host_data.get("osmatch", [])
-        if os_matches:
-            os_match = os_matches[0].get("name", "unknown")
 
         # Ports ouverts et services associés
         open_ports = []
@@ -114,12 +105,36 @@ def format_scan_results(raw_results, target_requested, scan_type):
                     "version": full_version if full_version else "unknown"
                 })
 
+        if not open_ports:
+            continue  # On ignore les hôtes sans ports ouverts pour un résultat plus clair
+
+        # État de l'hôte (up/down/unknown)
+        status = host_data.get("state", {}).get("state", "unknown")
+
+        # Détection d'OS (si disponible)
+        os_match = "unknown"
+        os_matches = host_data.get("osmatch", [])
+        if os_matches:
+            os_match = os_matches[0].get("name", "unknown")
+
+        mac_address = "unknown"
+        if "macaddress" in host_data and host_data["macaddress"]:
+            mac_address = host_data["macaddress"].get("addr", "unknown")
+
+        hostname = "unknown"
+        if "hostnames" in host_data and isinstance(host_data["hostnames"], list) and host_data["hostnames"]:
+            hostname = host_data["hostnames"][0].get("name", "unknown")
+
         processed_hosts.append({
             "ip": ip,
+            "mac": mac_address,
+            "hostname": hostname,
             "status": status,
             "os_match": os_match,
             "open_ports": open_ports
         })
+
+    processed_hosts.sort(key=lambda x: x["ip"])  # Tri par adresse IP pour une meilleure lisibilité
 
     # Durée du scan (si disponible)
     runtime = raw_results.get("runtime", {})

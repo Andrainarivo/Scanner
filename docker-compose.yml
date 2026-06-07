@@ -5,35 +5,39 @@ services:
     ports:
       - "6379:6379"
 
-  # 2. API : Reçoit les requêtes HTTP (Léger, pas de droits root nécessaires)
+  # 2. API : Reçoit les requêtes HTTP
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    network_mode: "host" 
     container_name: nmap-api
-    ports:
-      - "5000:5000"
+    # La ligne 'ports' est supprimée car le mode 'host' expose déjà le port 5000
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      # On utilise 127.0.0.1 car le conteneur est sur le même réseau que l'hôte
+      - CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+      #- CELERY_BROKER_URL=redis://redis:6379/0 --- dans le cas d'un réseau Docker ---
     depends_on:
       - redis
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
 
   # 3. Worker : Fait le travail lourd (Nmap)
   worker:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    network_mode: "host" # Indispensable ICI pour que Nmap voit le réseau de l'hôte
     container_name: nmap-worker
-    # On surcharge la commande CMD du Dockerfile pour lancer Celery
     command: celery -A tasks worker --loglevel=info
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+      #- CELERY_BROKER_URL=redis://redis:6379/0 --- dans le cas d'un réseau Docker ---
     depends_on:
       - redis
     cap_add:
       - NET_RAW
       - NET_ADMIN
-    
-    # Pour éviter de tuer la machine hôte
     deploy:
       resources:
         limits:

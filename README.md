@@ -1,10 +1,10 @@
 # Scanner
 
-A high-performance REST API for performing Nmap scans asynchronously using **python3-nmap**, **Flask**, **Celery**/**Redis**.
+A high-performance REST API for performing Nmap scans asynchronously using **python3-nmap**, **Flask**, **Celery** & **Redis**.
 
 ## Key Features
 
-* **Asynchronous Architecture**: Long-running scans do not block the API.
+* **Asynchronous Architecture**: Long-running or multiple scans does not block the API.
 * **Enhanced Security**: Runs as a non-root user while retaining necessary network privileges via **Linux Capabilities**.
 * **Multi-Technique Support**: Supports SYN Scan, TCP Connect, UDP, and FIN scans.
 * **Host Discovery**: Dedicated modules for ARP and Ping discovery.
@@ -14,18 +14,18 @@ A high-performance REST API for performing Nmap scans asynchronously using **pyt
 
 ## Getting Started
 
-### Prerequisites
+### Prerequisite
 
-* Docker CE
+* Docker Engine
 
-### Installation & Run
+### Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/Andrainarivo/Scanner.git
 cd Scanner
 
-# Build and start the stack
+# Build and start
 docker compose up -d --build
 ```
 
@@ -60,13 +60,9 @@ The API will be available at: `http://0.0.0.0:5000`
 }
 ```
 
-### 3. Check Status/Result
+### 3. Check the result
 
 `GET /status/<job_id>`
-
-### 4. Health Check
-
-`GET /health`
 
 ---
 

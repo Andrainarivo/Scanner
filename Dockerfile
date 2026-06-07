@@ -1,5 +1,5 @@
 # Image de base légère (Python 3.11 sur Debian Slim)
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Variables d'environnement pour optimiser Python dans Docker
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -8,7 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Installation des dépendances système
 # - nmap : Le scanner réseau
 # - libcap2-bin : Pour la commande 'setcap' (gestion des capabilities)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update -o Acquire::Retries=3 \
+    && apt-get install -y --no-install-recommends \
     nmap \
     libcap2-bin \
     && apt-get clean \
@@ -25,9 +26,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copie du code source
-COPY . .
+COPY ./api/ .
 
-# Étape 8 : GESTION DES CAPABILITIES (Le point critique)
+# Étape 8 : GESTION DES CAPABILITIES
 # Au lieu de lancer en root, on donne à nmap les droits spécifiques :
 # - cap_net_raw : Pour envoyer des paquets bruts (TCP scan, OS detection)
 # - cap_net_admin : Pour configurer les interfaces réseaux si besoin
